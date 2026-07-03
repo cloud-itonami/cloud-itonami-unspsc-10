@@ -1,0 +1,10 @@
+{:itonami.blueprint/id "cloud-itonami-unspsc-10"
+ :itonami.blueprint/name "Independent Urban Apiary & Pollinator Services"
+ :itonami.blueprint/unspsc-segment "10"
+ :itonami.blueprint/domain :agriculture/apiary-pollination
+ :itonami.blueprint/license "AGPL-3.0-or-later"
+ :itonami.blueprint/social-impact [:pollinator-health :urban-biodiversity :local-food-resilience]
+ :itonami.blueprint/governor :apiary-operations-governor
+ :itonami.blueprint/robotics true
+ :itonami.blueprint/required-technologies [:robotics :telemetry :optimization :audit-ledger]
+ :itonami.blueprint/status :public-oss}
