@@ -1,0 +1,224 @@
+(ns apiaryops.advisor
+  "ColonyAdvisor -- the *contained intelligence node* for the
+  independent urban apiary and pollinator-services coordination actor.
+
+  It normalizes colony-health patches (queen-status/weight/
+  temperature/acoustic-signal), drafts a pollination-route scheduling
+  proposal against a site, drafts a disease/pest concern flag, and
+  drafts an honey/wax harvest coordination proposal against a hive.
+  CRITICAL: it is a smart-but-untrusted advisor. It returns a
+  *proposal* (with a rationale + the fields it cited), never a
+  committed record and NEVER a real hive-intervention actuation
+  (opening a hive, administering a treatment, relocating a colony) or
+  disease-free/quarantine-clearance certification -- see README `What
+  this actor does NOT do`. Every output is censored downstream by
+  `apiaryops.governor` before anything touches the SSoT.
+
+  Like every sibling actor's advisor, this is a deterministic mock so
+  the actor graph runs offline and the governor contract is exercised
+  end-to-end. In production this calls a real LLM (kotoba-llm or
+  equivalent) with the same proposal shape.
+
+  Proposal shape (all kinds):
+    {:summary    str            ; human-facing draft / finding
+     :rationale  str            ; why -- informational only, NOT trusted
+                                 ; by the governor for any ground-truth
+                                 ; check (see `apiaryops.governor`)
+     :cites      [kw|str ..]    ; fields the advisor used
+     :effect     kw             ; how a commit would mutate the SSoT --
+                                 ; ALWAYS one of the closed
+                                 ; #{:hive/upsert :route/schedule
+                                 ; :disease-concern/flag
+                                 ; :harvest/propose} propose-shaped
+                                 ; effects, NEVER a direct hive-
+                                 ; intervention-actuation effect
+     :stake      kw|nil         ; :coordination/disease-concern | nil
+     :confidence 0..1}
+
+  CRITICAL invariant this advisor upholds: every request it is asked to
+  route MUST itself carry `:effect :propose` (the request-level
+  contract every caller of this actor agrees to) -- `apiaryops.governor`
+  HARD-holds any request that doesn't, so a mis-wired caller can never
+  reach a commit path even if this advisor were compromised."
+  (:require #?(:clj  [clojure.edn :as edn]
+               :cljs [cljs.reader :as edn])
+            [clojure.string :as str]
+            [apiaryops.registry :as registry]
+            [apiaryops.store :as store]
+            [langchain.model :as model]))
+
+(defn- log-colony-health
+  "Colony-health intake upsert -- the advisor only normalizes/
+  validates the patch; it does not invent the hive's queen-status,
+  weight, temperature, acoustic-signal or verification status. High
+  confidence, low stakes -- administrative logging, not an operational
+  decision."
+  [_db {:keys [patch]}]
+  {:summary    (str "コロニー健康記録更新: " (pr-str (keys patch)))
+   :rationale  "入力patchの正規化のみ。新規事実の生成なし。"
+   :cites      (vec (keys patch))
+   :effect     :hive/upsert
+   :value      patch
+   :stake      nil
+   :confidence 0.95})
+
+(defn- schedule-pollination-route
+  "Draft a pollination-route scheduling proposal against a site. The
+  advisor reports what it can see (site verified?/registered?) in its
+  rationale, but `apiaryops.governor` NEVER trusts this report -- it
+  independently re-derives verified?/registered? from the site's own
+  stored fields before any commit is possible."
+  [db {:keys [subject value]}]
+  (let [site-id (:site-id value)
+        s (store/site db site-id)
+        ready? (and s (registry/site-ready? s))]
+    {:summary    (str subject " 向け送粉ルート予定提案 (" (:route-type value) ")"
+                      (when s (str " site=" site-id)))
+     :rationale  (if s
+                   (str "site-verified?=" (registry/site-verified? s)
+                        " site-registered?=" (registry/site-registered? s)
+                        " actuate-hive?=" (boolean (:actuate-hive? value)))
+                   (str site-id " が見つかりません"))
+     :cites      (if s [site-id] [])
+     :effect     :route/schedule
+     :value      value
+     :stake      nil
+     :confidence (if (and ready? (not (:actuate-hive? value))) 0.9 0.3)}))
+
+(defn- flag-disease-concern
+  "Draft a notifiable/reportable bee-disease-or-pest concern (from
+  `apiaryops.registry/valid-disease-concerns`, WOAH Terrestrial Animal
+  Health Code Chapter 9.2). ALWAYS `:stake :coordination/disease-
+  concern` -- a disease concern is NEVER a proposal the advisor may
+  quietly downgrade to low-stakes, and it is never gated on the
+  referenced hive/site being verified (a concern can be raised about
+  ANY hive or site, verified or not -- see README `What this actor
+  does NOT do` re: never blocking safety-relevant reporting on an
+  administrative technicality). See `apiaryops.phase`: no phase ever
+  adds this op to a phase's `:auto` set; `apiaryops.governor` also
+  always escalates on `:coordination/disease-concern`. Two independent
+  layers agree, deliberately."
+  [db {:keys [subject value]}]
+  (let [hive-id (:hive-id value)
+        h (and hive-id (store/hive db hive-id))]
+    {:summary    (str subject " 向け疾病懸念報告 (" (:concern value) ")"
+                      (when h (str " hive=" hive-id)))
+     :rationale  (str "concern=" (:concern value) " description=" (:description value))
+     :cites      (if h [hive-id] [])
+     :effect     :disease-concern/flag
+     :value      value
+     :stake      :coordination/disease-concern
+     :confidence 0.9}))
+
+(defn- coordinate-harvest
+  "Draft an honey/wax harvest coordination proposal against a hive.
+  The advisor passes through the caller's own claimed harvest
+  quantity -- it does NOT invent one, and `apiaryops.governor` NEVER
+  trusts it: it independently recomputes whether the hive's own
+  cumulative-harvested quantity plus this claim would exceed the
+  hive's own recorded sustainable-harvest ceiling before any commit is
+  possible."
+  [db {:keys [subject value]}]
+  (let [hive-id (:hive-id value)
+        h (store/hive db hive-id)
+        ready? (and h (registry/hive-ready? h))
+        over-ceiling? (and h (registry/harvest-exceeds-sustainable-yield?
+                              h (:kg value)))]
+    {:summary    (str subject " 向け採蜜調整提案 ("
+                      (:kg value) " kg)"
+                      (when h (str " hive=" hive-id)))
+     :rationale  (if h
+                   (str "hive-verified?=" (registry/hive-verified? h)
+                        " hive-registered?=" (registry/hive-registered? h)
+                        " over-sustainable-ceiling?=" over-ceiling?)
+                   (str hive-id " が見つかりません"))
+     :cites      (if h [hive-id] [])
+     :effect     :harvest/propose
+     :value      value
+     :stake      nil
+     :confidence (if (and ready? (not over-ceiling?)) 0.9 0.3)}))
+
+(defn infer
+  "Route a request to the right proposal generator.
+  request: {:op kw :effect :propose :subject id ...op-specific...}"
+  [db {:keys [op] :as request}]
+  (case op
+    :log-colony-health          (log-colony-health db request)
+    :schedule-pollination-route (schedule-pollination-route db request)
+    :flag-disease-concern       (flag-disease-concern db request)
+    :coordinate-harvest         (coordinate-harvest db request)
+    {:summary "未対応の操作" :rationale (str op) :cites []
+     :effect :noop :stake nil :confidence 0.0}))
+
+;; ----------------------------- Advisor protocol -----------------------------
+
+(defprotocol Advisor
+  (-advise [advisor store request] "store + request -> proposal map"))
+
+(defn mock-advisor
+  "The deterministic advisor (the `infer` logic above). Default everywhere."
+  [] (reify Advisor (-advise [_ st req] (infer st req))))
+
+(def ^:private system-prompt
+  (str "あなたは都市養蜂・送粉サービス事業者の助言者です。"
+       "与えられた事実のみに基づき、提案を1つだけEDNマップで返します。"
+       "説明や前置きは一切書かず、EDNだけを出力します。\n"
+       "キー: :summary(人向けドラフト) :rationale(根拠/必ず事実から) "
+       ":cites(使った事実キーのベクタ) "
+       ":effect(:hive/upsert|:route/schedule|"
+       ":disease-concern/flag|:harvest/propose) "
+       ":stake(:coordination/disease-concern か nil) :confidence(0..1)。\n"
+       "重要: 未検証または未登録のサイト・巣箱に対する作業を提案してはいけません。"
+       "巣箱の開放・薬剤投与・コロニー移動等の直接介入(actuate)を絶対に提案してはいけません"
+       "(この actor は提案のみを行い、実行は一切行いません)。"
+       "疾病無し証明・検疫解除証明を自己発行する提案をしてはいけません。"
+       "採蜜量を偽って報告してはいけません。"))
+
+(defn- facts-for [st {:keys [op subject value]}]
+  (case op
+    :log-colony-health           {:hive (store/hive st subject)}
+    :schedule-pollination-route  {:site (store/site st (:site-id value))}
+    :flag-disease-concern        {:hive (and (:hive-id value)
+                                              (store/hive st (:hive-id value)))}
+    :coordinate-harvest          {:hive (store/hive st (:hive-id value))}
+    {}))
+
+(defn- parse-proposal
+  "Parse the model's EDN proposal defensively. Any parse/shape failure
+  yields a safe low-confidence noop so `apiaryops.governor`
+  escalates/holds -- an LLM hiccup can never auto-schedule a route,
+  auto-flag a concern, or auto-coordinate a harvest."
+  [content]
+  (let [p (try (edn/read-string (str/trim (str content)))
+               (catch #?(:clj Exception :cljs :default) _ nil))]
+    (if (map? p)
+      (-> p
+          (update :cites #(vec (or % [])))
+          (update :confidence #(if (number? %) (double %) 0.0))
+          (update :effect #(or % :noop)))
+      {:summary "LLM応答を解釈できませんでした" :rationale (str content)
+       :cites [] :effect :noop :stake nil :confidence 0.0})))
+
+(defn llm-advisor
+  "An advisor backed by a `langchain.model/ChatModel` (real inference)."
+  ([chat-model] (llm-advisor chat-model {}))
+  ([chat-model gen-opts]
+   (reify Advisor
+     (-advise [_ st req]
+       (let [msgs [{:role :system :content system-prompt}
+                   {:role :user :content (str "操作: " (:op req)
+                                              "\n対象: " (:subject req)
+                                              "\n事実: " (pr-str (facts-for st req)))}]
+             resp (model/-generate chat-model msgs gen-opts)]
+         (parse-proposal (:content resp)))))))
+
+(defn trace
+  "Decision-grounded audit record -- persisted to the :audit channel."
+  [request proposal]
+  {:t          :apiaryops-advisor-proposal
+   :op         (:op request)
+   :subject    (:subject request)
+   :summary    (:summary proposal)
+   :rationale  (:rationale proposal)
+   :cites      (:cites proposal)
+   :confidence (:confidence proposal)})

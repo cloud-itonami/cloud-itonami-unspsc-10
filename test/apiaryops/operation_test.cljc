@@ -1,0 +1,85 @@
+(ns apiaryops.operation-test
+  "Smoke tests for the compiled ApiaryOperationActor graph itself
+  (build + one happy path per op). The governor's full rule contract
+  (HARD holds, escalation, phase gating) is exercised in
+  `apiaryops.governor-contract-test`; the Store contract in
+  `apiaryops.store-contract-test`."
+  (:require [clojure.test :refer [deftest is testing]]
+            [langgraph.graph :as g]
+            [apiaryops.operation :as op]
+            [apiaryops.store :as store]))
+
+(def coordinator {:actor-id "coord-1" :actor-role :apiary-coordinator :phase 3})
+
+(defn- exec-op [actor tid request context]
+  (g/run* actor {:request request :context context} {:thread-id tid}))
+
+(defn- approve! [actor tid]
+  (g/run* actor {:approval {:status :approved :by "coord-1"}} {:thread-id tid :resume? true}))
+
+(deftest test-actor-builds
+  (testing "ApiaryOperationActor can be built with a store"
+    (let [s (store/mem-store)
+          actor (op/build s)]
+      (is (not (nil? actor))))))
+
+(deftest test-colony-health-logging-proposal
+  (testing "Proposing a colony-health log auto-commits when clean (phase 3, no physical/financial risk)"
+    (let [s (-> (store/mem-store) (store/sample-data!))
+          actor (op/build s)
+          initial-ledger-size (count (store/get-ledger s))
+          result (exec-op actor "t1"
+                          {:op :log-colony-health :effect :propose :subject "hive-001"
+                           :patch {:queen-status :laying}}
+                          coordinator)
+          final-ledger-size (count (store/get-ledger s))]
+      (is (> final-ledger-size initial-ledger-size))
+      (is (= :commit (get-in result [:state :disposition]))))))
+
+(deftest test-pollination-route-scheduling
+  (testing "Pollination-route scheduling always escalates for human approval"
+    (let [s (-> (store/mem-store) (store/sample-data!))
+          actor (op/build s)
+          result (exec-op actor "t2"
+                          {:op :schedule-pollination-route :effect :propose :subject "rte-1"
+                           :value {:site-id "orchard-001" :route-type :orchard-pass
+                                   :route-date "2026-08-01" :actuate-hive? false}}
+                          coordinator)]
+      (is (= :interrupted (:status result)))
+      (is (= :commit (get-in (approve! actor "t2") [:state :disposition]))))))
+
+(deftest test-disease-concern-escalation
+  (testing "Disease concerns always escalate"
+    (let [s (-> (store/mem-store) (store/sample-data!))
+          actor (op/build s)
+          result (exec-op actor "t3"
+                          {:op :flag-disease-concern :effect :propose :subject "concern-1"
+                           :value {:hive-id "hive-001" :concern :suspected-varroosis :description "mite signs"}}
+                          coordinator)]
+      (is (= :interrupted (:status result))))))
+
+(deftest test-harvest-coordination-proposal
+  (testing "Harvest coordination proposal is submitted and (when within ceiling) escalates for approval"
+    (let [s (-> (store/mem-store) (store/sample-data!))
+          actor (op/build s)
+          result (exec-op actor "t4"
+                          {:op :coordinate-harvest :effect :propose :subject "hrv-1"
+                           :value {:hive-id "hive-001" :kg 5.0
+                                   :destination "local-market"}}
+                          coordinator)]
+      (is (some? result))
+      (is (= :interrupted (:status result))))))
+
+(deftest test-ledger-is-append-only
+  (testing "Audit ledger is append-only"
+    (let [s (store/mem-store)
+          initial-count (count (store/get-ledger s))]
+      (store/append-ledger! s {:t :test-entry})
+      (is (= (inc initial-count) (count (store/get-ledger s)))))))
+
+(deftest test-records-are-committed
+  (testing "The domain-agnostic commit-record! path stores a raw record by :id"
+    (let [s (store/mem-store)
+          record {:id "test-001" :data "test"}]
+      (store/commit-record! s record)
+      (is (= record (get (store/get-records s) "test-001"))))))

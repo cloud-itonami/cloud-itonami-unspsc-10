@@ -7,4 +7,33 @@
  :itonami.blueprint/governor :apiary-operations-governor
  :itonami.blueprint/robotics true
  :itonami.blueprint/required-technologies [:robotics :telemetry :optimization :audit-ledger]
- :itonami.blueprint/status :public-oss}
+ :itonami.blueprint/status :public-oss
+ :itonami.blueprint/maturity :implemented
+ :itonami.blueprint/implemented-slice
+ "ColonyAdvisor ⊣ Apiary Operations Governor, langgraph-clj StateGraph,
+ append-only audit ledger. A pollination-SERVICE operator coordination
+ actor (colony-health data logging, pollination-route scheduling
+ against customer sites, disease/pest concern flagging, honey/wax
+ harvest coordination) -- not direct hive-intervention actuation
+ authority and not disease-free/quarantine-clearance certification
+ authority. Four ops (`:log-colony-health` / `:schedule-pollination-
+ route` / `:flag-disease-concern` / `:coordinate-harvest`), all
+ `:effect :propose` only. Twelve concrete governor checks elaborate
+ this blueprint's four HARD invariants: propose-only effect, closed op
+ allowlist, closed proposal-effect allowlist (no direct hive-
+ intervention actuation), permanent hive-actuate block, permanent
+ disease-free/quarantine-certification-authority block, independent
+ site verification/registration before route scheduling, independent
+ hive verification/registration before harvest coordination,
+ independent cumulative harvest-quantity recompute against the hive's
+ own logged sustainable-harvest ceiling, double-schedule guard, queen-
+ status validation, weight plausibility validation, and temperature
+ plausibility validation. Disease/pest-concern flagging (grounded in
+ WOAH Terrestrial Animal Health Code Chapter 9.2 notifiable bee
+ diseases) ALWAYS escalates to a human apiary coordinator;
+ `:log-colony-health` is the only op eligible to auto-commit, and only
+ at phase 3 when governor-clean. See docs/adr/0001-architecture.md
+ Decision 0 for this blueprint's documented governor-keyword overlap
+ with `cloud-itonami-isco-6123` (a different, independent
+ implementation of the same domain from the occupation-classification
+ axis)."}
