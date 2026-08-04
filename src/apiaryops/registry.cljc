@@ -161,7 +161,27 @@
         so-far (:harvested-kg-to-date hive 0.0)]
     (and (number? ceiling)
          (number? new-kg)
-         (> (+ (double so-far) (double new-kg)) (double ceiling)))))
+         (number? so-far)
+         ;; Compared at 1/10000 of a unit, not on raw doubles. A shipment
+         ;; that fills a batch EXACTLY to its recorded capacity is legal,
+         ;; and comparing the raw sum flagged such shipments as over
+         ;; because the sum is not the double nearest the true total.
+         (> (Math/round (* 10000 (+ (double so-far) (double new-kg))))
+            (Math/round (* 10000 (double ceiling))))))) 
+
+(defn harvest-exceeds-sustainable-yield-checkable?
+  "Can `hive`'s headroom actually be computed for `new-kg`?
+
+  `harvest-exceeds-sustainable-yield?` answers only `over` / `not over`, and its
+  `(and (number? ...) ...)` guard made every un-checkable case fall
+  through as `not over` -- a batch with no recorded capacity, or a
+  shipment stating no amount, passed the over-capacity check silently.
+  Callers must ask this first: un-checkable is not headroom."
+  [hive new-kg]
+  (boolean (and (map? hive)
+                (number? (:max-sustainable-harvest-kg hive))
+                (number? (:harvested-kg-to-date hive 0.0))
+                (number? new-kg))))
 
 (defn queen-status-valid?
   "Is `queen-status` one of the closed, known queen-status values?
