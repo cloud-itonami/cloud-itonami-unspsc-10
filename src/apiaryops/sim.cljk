@@ -1,5 +1,5 @@
 (ns apiaryops.sim
-  "Demo driver -- `clojure -M:dev:run`. Walks a clean apiary through
+  "Demo driver -- `kbb -M:dev:run`. Walks a clean apiary through
   intake -> pollination-route scheduling (escalate/approve) ->
   disease-concern flag (escalate/approve) -> harvest coordination
   (escalate/approve), then shows HARD-hold scenarios: a mis-wired

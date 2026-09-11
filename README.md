@@ -71,7 +71,7 @@ Portable `.cljc` namespaces under `src/apiaryops/`:
 - `operation` -- the StateGraph (1 run = 1 coordination request);
   `sim` drives the demo.
 
-`clojure -M:test` (77 tests, 209 assertions, 0 failures). See
+`kbb -M:test` (77 tests, 209 assertions, 0 failures). See
 [`docs/adr/0001-architecture.md`](docs/adr/0001-architecture.md) for
 the full design, including the documented `cloud-itonami-isco-6123`
 governor-keyword-overlap differentiation and the WOAH Terrestrial
