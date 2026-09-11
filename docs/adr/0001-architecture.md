@@ -188,9 +188,9 @@ standalone coordinator blueprint.
 
 ## Verification
 
-- `cloud-itonami-unspsc-10`: `clojure -M:test` green (77 tests / 209
+- `cloud-itonami-unspsc-10`: `kbb -M:test` green (77 tests / 209
   assertions, 0 failures, 0 errors, verified from a fresh worktree
-  checkout), demo narrative (`clojure -M:dev:run`) exercises proposal
+  checkout), demo narrative (`kbb -M:dev:run`) exercises proposal
   submission, escalation, and every HARD-hold scenario directly
   (not-propose-effect, unknown-op, site-not-verified, hive-not-
   verified, harvest-exceeds-sustainable-yield, hive-actuate-blocked,
@@ -204,7 +204,7 @@ standalone coordinator blueprint.
 - `deps.edn` pins `io.github.kotoba-lang/langgraph` and
   `io.github.kotoba-lang/langchain` via `:local/root` directly in the
   top-level `:deps` (not only under a `:dev` alias), so a bare
-  `clojure -M:test` resolves offline inside the monorepo checkout.
+  `kbb -M:test` resolves offline inside the monorepo checkout.
 - WOAH Terrestrial Animal Health Code Chapter 9.2 (bee diseases) and
   American foulbrood's notifiable status were web-verified 2026-07-19
   against woah.org before being cited in `apiaryops.registry`'s
