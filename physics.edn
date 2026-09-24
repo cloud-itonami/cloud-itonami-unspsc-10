@@ -1,0 +1,44 @@
+;; What this vertical's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:dev:physics` runs it.
+;;
+;; README "Robotics premise": a hive-monitoring robot (weight, temperature,
+;; acoustic swarm-signal sensing; pollination-route mapping) performs the
+;; on-site monitoring of an urban apiary. Its physical work: lifting a honey
+;; super off the brood box to weigh and inspect it, carrying harvested supers
+;; across the rooftop to the lift, and the hive wall heating on a hot roof
+;; (the temperature it senses).
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+;; Replacing an estimate with a sourced value is this bot's growth work.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-unspsc-10"
+ :cases
+ [{:id :lift-honey-super
+   :kind :manipulator
+   :procedure "arm lifts a honey super off the brood box and sets it on the weighing stand beside the hive"
+   :params {:l1-m 0.70 :l2-m 0.60 :m1-kg 12.0 :m2-kg 8.0
+            :from [0.80 0.40] :to [0.40 0.90] :duration-s 4.0 :steps 500}
+   :sweep {:param :payload-kg :values [5.0 10.0 15.0 20.0 25.0]}
+   :quantity :peak-tau1-nm
+   :limit {:max 250.0 :basis "estimate: continuous shoulder torque of a 20 kg-payload-class arm on a mobile base"}
+   :boundary {:lo 1.0 :hi 50.0}}
+  {:id :rooftop-super-cart
+   :kind :transport
+   :procedure "robot cart carries a 60 kg stack of harvested supers 30 m across the rooftop and down the ramp to the goods lift"
+   :params {:mass-kg 70.0 :payload-kg 60.0 :distance-m 30.0 :v-max-mps 0.8 :a-max-mps2 0.4
+            :brake-decel-mps2 1.0 :drive-force-n 400.0 :crr 0.02 :cog-height-m 0.30
+            :payload-cog-height-m 0.90 :support-half-length-m 0.35 :max-time-s 600.0}
+   :sweep {:param :slope-deg :values [0.0 4.0 8.0 12.0 16.0 20.0]}
+   :quantity :min-tipover-margin
+   :limit {:min 0.3 :basis "estimate: keep 30 % of the static restoring moment in reserve with a stack of supers on a roof ramp"}
+   :boundary {:lo 0.0 :hi 25.0}}
+  {:id :hive-wall-roof-heat
+   :kind :thermal
+   :procedure "20 mm pine hive wall on a sun-exposed roof over a 6-hour afternoon; the inner face faces the 35 C brood-nest air"
+   :params {:thickness-m 0.020 :conductivity-w-mk 0.12 :density-kg-m3 500.0 :specific-heat-j-kgk 1600.0
+            :t0-c 35.0 :h-front-w-m2k 15.0 :t-back-ambient-c 35.0 :h-back-w-m2k 5.0
+            :threshold-c 38.0 :duration-s 21600.0 :nodes 11}
+   :sweep {:param :t-hot-c :values [35.0 40.0 45.0 55.0 65.0 75.0]}
+   :quantity :final-back-c
+   :limit {:max 38.0 :basis "estimate: inner wall kept within ~3 K of the ~35 C brood-nest temperature the colony regulates"}
+   :boundary {:lo 30.0 :hi 100.0}}]}
